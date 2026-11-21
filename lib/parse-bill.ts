@@ -1,6 +1,6 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import Groq from 'groq-sdk';
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY! });
 
 export interface ParsedLineItem {
   item_name: string;
@@ -8,43 +8,25 @@ export interface ParsedLineItem {
   amount: number;
 }
 
-export async function parseGroceryInput(params: {
-  imageBase64?: string;
-  mimeType?: string;
-  hinglishText?: string;
-}): Promise<ParsedLineItem[]> {
-  const contents: any[] = [
-    `Extract all grocery items, quantities, and total line prices in INR from this Indian kirana store slip or Hinglish voice note. Normalize item names cleanly (e.g., "Aashirvaad Atta", "Amul Milk").`
-  ];
-
-  if (params.imageBase64 && params.mimeType) {
-    contents.push({
-      inlineData: { data: params.imageBase64, mimeType: params.mimeType },
-    });
-  }
-  if (params.hinglishText) {
-    contents.push(`Voice/Text Note: "${params.hinglishText}"`);
-  }
-
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents,
-    config: {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            item_name: { type: Type.STRING },
-            quantity: { type: Type.STRING },
-            amount: { type: Type.NUMBER },
-          },
-          required: ['item_name', 'quantity', 'amount'],
-        },
+export async function parseHinglishBill(hinglishText: string): Promise<ParsedLineItem[]> {
+  const completion = await groq.chat.completions.create({
+    model: 'openai/gpt-oss-120b',
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      {
+        role: 'system',
+        content:
+          'Extract grocery line items from Indian kirana store text or Hinglish notes. Return ONLY a JSON object with this exact shape: {"items":[{"item_name":"string","quantity":"string","amount":number}]}. Normalize item names cleanly and use INR numeric amounts.',
       },
-    },
+      {
+        role: 'user',
+        content: hinglishText,
+      },
+    ],
   });
 
-  return JSON.parse(response.text || '[]');
+  const raw = completion.choices[0]?.message?.content || '{"items":[]}';
+  const parsed = JSON.parse(raw);
+  return Array.isArray(parsed.items) ? parsed.items : [];
 }
