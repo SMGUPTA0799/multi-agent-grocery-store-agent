@@ -1,48 +1,70 @@
-import Database from 'better-sqlite3';
+import { neon } from '@neondatabase/serverless';
 
-const db = new Database('khata.db');
+export function getDb() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error('Missing DATABASE_URL environment variable');
+  }
+  return neon(url);
+}
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS shops (
-    id TEXT PRIMARY KEY,
-    slug TEXT UNIQUE,
-    name TEXT,
-    upi_id TEXT
-  );
+export async function initSchema() {
+  const sql = getDb();
 
-  CREATE TABLE IF NOT EXISTS customers (
-    id TEXT PRIMARY KEY,
-    shop_id TEXT,
-    name TEXT,
-    phone TEXT,
-    magic_token TEXT UNIQUE
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS shops (
+      id TEXT PRIMARY KEY,
+      slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL,
+      upi_id TEXT NOT NULL
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS bills (
-    id TEXT PRIMARY KEY,
-    shop_id TEXT,
-    customer_id TEXT,
-    proof_image_base64 TEXT,
-    raw_transcript TEXT,
-    status TEXT DEFAULT 'verified', -- 'verified' | 'disputed' | 'settled'
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-  );
+  await sql`
+    CREATE TABLE IF NOT EXISTS customers (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id),
+      name TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      magic_token TEXT UNIQUE NOT NULL
+    )
+  `;
 
-  CREATE TABLE IF NOT EXISTS bill_items (
-    id TEXT PRIMARY KEY,
-    bill_id TEXT,
-    item_name TEXT,
-    quantity TEXT,
-    amount REAL,
-    is_disputed INTEGER DEFAULT 0,
-    dispute_note TEXT,
-    is_active INTEGER DEFAULT 1,
-    replaces_item_id TEXT
-  );
-`);
+  await sql`
+    CREATE TABLE IF NOT EXISTS bills (
+      id TEXT PRIMARY KEY,
+      shop_id TEXT NOT NULL REFERENCES shops(id),
+      customer_id TEXT NOT NULL REFERENCES customers(id),
+      proof_image_base64 TEXT,
+      raw_transcript TEXT,
+      status TEXT NOT NULL DEFAULT 'verified',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
 
-// Seed demo data for immediate testing
-db.prepare(`INSERT OR IGNORE INTO shops VALUES ('shop_1', 'sharma-kirana', 'Sharma General Store', 'sharmakirana@upi')`).run();
-db.prepare(`INSERT OR IGNORE INTO customers VALUES ('cust_1', 'shop_1', 'Rahul Verma', '9876543210', 'demo-rahul-token')`).run();
+  await sql`
+    CREATE TABLE IF NOT EXISTS bill_items (
+      id TEXT PRIMARY KEY,
+      bill_id TEXT NOT NULL REFERENCES bills(id),
+      item_name TEXT NOT NULL,
+      quantity TEXT NOT NULL,
+      amount NUMERIC(10, 2) NOT NULL,
+      is_disputed BOOLEAN NOT NULL DEFAULT FALSE,
+      dispute_note TEXT,
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      replaces_item_id TEXT
+    )
+  `;
 
-export default db;
+  await sql`
+    INSERT INTO shops (id, slug, name, upi_id)
+    VALUES ('shop_1', 'sharma-kirana', 'Sharma General Store', 'sharmakirana@upi')
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  await sql`
+    INSERT INTO customers (id, shop_id, name, phone, magic_token)
+    VALUES ('cust_1', 'shop_1', 'Rahul Verma', '9876543210', 'demo-rahul-token')
+    ON CONFLICT (id) DO NOTHING
+  `;
+}
